@@ -1,5 +1,5 @@
 # README
-The CLAI (Command Line AI) app is a chatgpt based assistant with access to your local files. You'll need a OPENAI_API_KEY. Run the app with `python chat.py` or `python chat.py "<your prompt>"`.
+The UIAI (User Interface AI) app is a openai based streamlit web app assistant with access to your local files. You'll need a OPENAI_API_KEY. Run the app with `streamlit run chat.py`.
 
 ## Setup
 You'll need to save the OPENAI_API_KEY as an environment variable or paste it in the **settings.json** file. 

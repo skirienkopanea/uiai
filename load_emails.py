@@ -18,14 +18,16 @@ def remove_diacritics(input_str):
     return ascii_str
 
 settings_path = 'settings.json'
+user_settings_path = 'user_settings.json'
 settings = {}
 
 def load_emails():
+    printlist = []
     # Open the file and load the JSON data
     with open(settings_path, 'r') as file:
         settings = json.loads(file.read())
-
-    verbose = settings["verbose"]
+    with open(user_settings_path, 'r') as file:
+        settings.update(json.loads(file.read()))
 
     if not os.path.exists(settings["db_path"]):
 
@@ -42,7 +44,11 @@ def load_emails():
             for query in queries:
                 if len(query) > 6:
                     query += ";"
-                    if verbose: print(query)
+                    printlist.append({
+                    "code":query,
+                    "language": "sql"
+                    ,"role":"system"
+                    })
                     cursor.execute(query)
             conn.close()
 
@@ -104,7 +110,7 @@ def load_emails():
             '{remove_diacritics(message.Body.replace("'", "''"))}'
         );
         '''
-        #if verbose: print(query)
+        
         # Create a table
         cursor.execute(query)
         # Retrieve the last inserted EMAILID
@@ -195,8 +201,10 @@ def load_emails():
                                 ?                             -- ATTACHMENT_TYPE
                             )
                         ''', (email_id, remove_diacritics(attachment.FileName).replace(" ","_"), attachment_filename, extension))
-
-                        if verbose: print(os.path.abspath(attachment_filename))
+                        printlist.append({
+                        "info":os.path.abspath(attachment_filename)
+                        ,"role":"system"
+                        })
                         # Save attachment
                         attachment.SaveAsFile(os.path.abspath(attachment_filename))
 
@@ -252,8 +260,10 @@ def load_emails():
                 ?                             -- ATTACHMENT_TYPE
             )
         ''', (email_id, 'Message Body', email_filepath, 'html'))
-
-        if verbose: print(email_id)
+        printlist.append({
+                        "info":email_id
+                        ,"role":"system"
+                        })
 
         # Save email content
         with open(email_filepath, 'w', encoding='utf-8', errors='ignore') as file:
@@ -262,9 +272,14 @@ def load_emails():
 
         # Commit the transaction
         conn.commit()
-        if verbose: print(f"Saved: {email_filepath}")
-
-    if verbose: print("Emails retrieval and saving completed.")
+        printlist.append({
+                        "info":email_filepath
+                        ,"role":"system"
+                        })
+    printlist.append({
+                        "success": "Emails retrieval and saving completed."
+                        ,"role":"system"
+                        })
 
     # Get the Calendar folder (9 refers to the Calendar folder)
     calendar_folder = outlook.GetDefaultFolder(9)
@@ -293,15 +308,19 @@ def load_emails():
         query = f'''INSERT INTO [APPOINTMENT] (NAME, START_DATE, END_DATE)
                 VALUES ('{appointment.Subject}', '{appointment.Start.strftime("%B %d, %Y %I:%M %p")}', '{appointment.End.strftime("%B %d, %Y %I:%M %p")}');
         '''
-        if verbose: 
-            print(appointment.Subject,query)
-        #if verbose: print(query)
+        printlist.append({
+                        "info":appointment.Subject + "\n" + query
+                        ,"role":"system"
+                        })
+        
         # Create a table
         cursor.execute(query)
         conn.commit()
 
-    if verbose: print("Future appointments saved.")
+    printlist.append({
+                        "success":"Future appointments saved."
+                        ,"role":"system"
+                        })
+    return printlist
     # Close the connection
     conn.close()
-
-
