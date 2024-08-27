@@ -1,0 +1,8 @@
+{
+    "verbose": false,
+    "email_address": "sample@email.com",
+    "email_folder": "Inbox",
+    "email_count": 50,
+    "appointment_count": 5,
+    "OPENAI_API_KEY": "<your_openai_api_key>"
+}

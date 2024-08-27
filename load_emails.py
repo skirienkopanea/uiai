@@ -7,6 +7,9 @@ from bs4 import BeautifulSoup
 import sqlite3
 import unicodedata
 import json
+import random
+import time
+import streamlit as st
 
 def remove_diacritics(input_str):
     # Normalize the string to decompose combined characters into their base characters and diacritics
@@ -22,12 +25,14 @@ user_settings_path = 'user_settings.json'
 settings = {}
 
 def load_emails():
-    printlist = []
+    
     # Open the file and load the JSON data
     with open(settings_path, 'r') as file:
         settings = json.loads(file.read())
     with open(user_settings_path, 'r') as file:
         settings.update(json.loads(file.read()))
+
+    verbose = settings["verbose"]
 
     if not os.path.exists(settings["db_path"]):
 
@@ -44,11 +49,7 @@ def load_emails():
             for query in queries:
                 if len(query) > 6:
                     query += ";"
-                    printlist.append({
-                    "code":query,
-                    "language": "sql"
-                    ,"role":"system"
-                    })
+                    if verbose: yield "\n\n" + f"```sql\n\n{query}\n```\n"
                     cursor.execute(query)
             conn.close()
 
@@ -201,10 +202,8 @@ def load_emails():
                                 ?                             -- ATTACHMENT_TYPE
                             )
                         ''', (email_id, remove_diacritics(attachment.FileName).replace(" ","_"), attachment_filename, extension))
-                        printlist.append({
-                        "info":os.path.abspath(attachment_filename)
-                        ,"role":"system"
-                        })
+                        if verbose: yield "\n\n" + os.path.abspath(attachment_filename)
+                        
                         # Save attachment
                         attachment.SaveAsFile(os.path.abspath(attachment_filename))
 
@@ -260,10 +259,6 @@ def load_emails():
                 ?                             -- ATTACHMENT_TYPE
             )
         ''', (email_id, 'Message Body', email_filepath, 'html'))
-        printlist.append({
-                        "info":email_id
-                        ,"role":"system"
-                        })
 
         # Save email content
         with open(email_filepath, 'w', encoding='utf-8', errors='ignore') as file:
@@ -272,14 +267,9 @@ def load_emails():
 
         # Commit the transaction
         conn.commit()
-        printlist.append({
-                        "info":email_filepath
-                        ,"role":"system"
-                        })
-    printlist.append({
-                        "success": "Emails retrieval and saving completed."
-                        ,"role":"system"
-                        })
+        if verbose: yield "\n\n" + email_filepath
+                       
+    if verbose: yield "\n\n" +  "Emails retrieval and saving completed."
 
     # Get the Calendar folder (9 refers to the Calendar folder)
     calendar_folder = outlook.GetDefaultFolder(9)
@@ -308,19 +298,13 @@ def load_emails():
         query = f'''INSERT INTO [APPOINTMENT] (NAME, START_DATE, END_DATE)
                 VALUES ('{appointment.Subject}', '{appointment.Start.strftime("%B %d, %Y %I:%M %p")}', '{appointment.End.strftime("%B %d, %Y %I:%M %p")}');
         '''
-        printlist.append({
-                        "info":appointment.Subject + "\n" + query
-                        ,"role":"system"
-                        })
+        if verbose: yield "\n\n" + appointment.Subject + "\n" + query
         
         # Create a table
         cursor.execute(query)
         conn.commit()
 
-    printlist.append({
-                        "success":"Future appointments saved."
-                        ,"role":"system"
-                        })
-    return printlist
+    if verbose: yield "\n\n" + "Future appointments saved."
     # Close the connection
     conn.close()
+    

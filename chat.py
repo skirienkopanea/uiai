@@ -7,6 +7,33 @@ from load_emails import load_emails
 import shutil
 import concurrent.futures
 from qa import get_answer
+import random
+
+# TODO: stream images
+# TODO: Open images
+# TODO: Open videos
+# TODO: Open audios
+# TODO: Open emails: 
+# TODO: Export chat history, save chats, resume chats.
+# import streamlit as st
+# import streamlit.components.v1 as components
+# p = open("plot.html")
+# components.html(p.read())
+#TODO: support graphs, csv, tables
+#TODO: rag for single uploaded file
+#TODO: echo but with specified format i.e. json formatter, graph
+
+def response_generator(response=None):
+    if response is None: response = random.choice(
+        [
+            "Hello there! How can I assist you today?",
+            "Hi, human! Is there anything I can help you with?",
+            "Do you need help?",
+        ]
+    )
+    for word in response.split():
+        yield word + " "
+        time.sleep(0.1)
 
 st.set_page_config(page_title="🤖🔗 SAP Bot")
 st.title('🤖🔗 SAP Bot')
@@ -35,57 +62,58 @@ avatar = {
     }
 
 
-def load_outlook():
-    printlist = []
-    directory_path = settings["email_path"]
-    if os.path.exists(directory_path) and os.path.isdir(directory_path):
-                shutil.rmtree(directory_path)
-                if verbose: printlist.append(
-                    {
-                    "info":f"Directory '{directory_path}' and all its contents have been removed."
-                    ,"role":"system"
-                    })
-    else:
-         if verbose: printlist.append(
-                    {
-                    "warning":f"Directory '{directory_path}' does not exist."
-                    ,"role":"system"
-                    })
+def load_outlook(role="assistant",avatar=avatar):
+    with st.chat_message(role,avatar=avatar.get(role)):
+        st.write_stream(response_generator("Loading Outlook data..."))
+        st.session_state.messages.append({"role": role, "content": "Loading Outlook data..."})
+
+    def remove_folders():
+        directory_path = settings["email_path"]
+        if os.path.exists(directory_path) and os.path.isdir(directory_path):
+                    shutil.rmtree(directory_path)
+                    if verbose:
+                        yield(f"\n\nDirectory '{directory_path}' and all its contents have been removed.")
+        else:
+            if verbose:
+                yield(f"\n\nDirectory '{directory_path}' does not exist.")
+        
+        file_path = settings["db_path"]
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+                    os.remove(file_path)
+                    if verbose:
+                        yield(f"\n\nFile '{file_path}' has been removed.")
+        else:
+            if verbose:
+                yield(f"\n\nDirectory '{file_path}' does not exist.")
+
     
-    file_path = settings["db_path"]
-    if os.path.exists(file_path) and os.path.isfile(file_path):
-                os.remove(file_path)
-                if verbose: printlist.append(
-                    {
-                    "info":f"File '{file_path}' has been removed."
-                    ,"role":"system"
-                    })
+    role = "system"
+    if verbose:
+        with st.chat_message(role,avatar=avatar.get(role)):
+            response = st.write_stream(remove_folders)
+            st.session_state.messages.append({"role": role, "content": response})
     else:
-         if verbose: printlist.append(
-                    {
-                    "warning":f"Directory '{file_path}' does not exist."
-                    ,"role":"system"
-                    })
+        st.write_stream(remove_folders)
+    
     try:
         pythoncom.CoInitialize()  # Initialize COM library in the current thread
-        email_logs = load_emails()
+        role = "system"
         if verbose:
-            printlist = printlist + email_logs
+            with st.chat_message(role,avatar=avatar.get(role)):
+                response = st.write_stream(load_emails)
+                st.session_state.messages.append({"role": role, "content": response})
+        else:
+            st.write_stream(load_emails)
+        role = "system"
+        with st.chat_message(role,avatar=avatar.get(role)):
+            st.success("Outlook loaded")
+            st.session_state.messages.append({"role": role, "success": "Outlook loaded"})    
     except Exception as e:
-        return [{
-                    "exception":e
-                    ,"role":"system"
-                    }]
+        role = "system"
+        with st.chat_message(role,avatar=avatar.get(role)):
+            st.exception(e)
     finally:
         pythoncom.CoUninitialize()  # Uninitialize COM library
-    
-    printlist.append(
-                    {
-                    "success":f"Outlook data loaded!"
-                    ,"role":"system"
-                    })
-    
-    return printlist
   
 # Function to render a message
 def render_message(message):
@@ -120,16 +148,6 @@ email_address = st.sidebar.text_input('Email Address', user_settings.get('email_
 email_folder = st.sidebar.text_input('Email Folder', user_settings.get('email_folder', 'Inbox'))
 email_count = st.sidebar.number_input('Email Count', min_value=0, value=user_settings.get('email_count', 50))
 appointment_count = st.sidebar.number_input('Appointment Count', min_value=0, value=user_settings.get('appointment_count', 5))
-if st.sidebar.button('Load Outlook Data'):
-    #st.session_state.messages.append({"role": "system", "warning": "Hey!!"})
-    #st.session_state.messages.append({"role": "system", "content": "hello"})
-
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(load_outlook)
-        result = future.result()
-    for res in result:
-        st.session_state.messages.append(res)
-    
 # Create a dictionary with the updated settings
 updated_settings = {
     "verbose": verbose,
@@ -153,7 +171,10 @@ if st.session_state.get('updated_settings', None) != updated_settings:
 # Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
-
+    # Welcome message
+    with st.chat_message("assistant",avatar=avatar.get("assistant")):
+        response = st.write_stream(response_generator())
+        # But dont log it to history, it disappears after first message.
 # Display chat messages from history
 for message in st.session_state.messages:
     render_message(message)
@@ -169,10 +190,10 @@ if prompt := st.chat_input("What do you need to know?"):
 
     # Call qa.apy method
     # Split qa script in vectorstore load, and qa only
-    responses = get_answer(prompt,verbose)
+    
+    get_answer(prompt,verbose,avatar=avatar)
 
-
-    for response in responses:
-        render_message(response)
-# Add assistant response to chat history
-        st.session_state.messages.append(response)
+if st.sidebar.button('Load Outlook Data'):
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        load_outlook("assistant")
+        # let each output to chat declare its own message append
