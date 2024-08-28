@@ -18,6 +18,7 @@ from question_graph import generate_graph
 import pandas as pd
 import streamlit as st
 import re
+import gc
 
 
 
@@ -44,8 +45,10 @@ with open(user_settings_path, 'r') as file:
 
 
 if os.environ["OPENAI_API_KEY"] is None: os.environ["OPENAI_API_KEY"] = settings["OPENAI_API_KEY"]
+model = OpenAIEmbeddings(model="text-embedding-3-small")
 
-def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},role="assistant"):
+def qa(q,verbose,persist_directory=settings["vs_path"],avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},role="assistant",temp_file_path=None):
+    vectorstoredb = Chroma(persist_directory=persist_directory,embedding_function=model)
 
     if not verbose:
         warnings.filterwarnings("ignore")
@@ -88,94 +91,6 @@ def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},ro
     def source_docs(docs):
         return "\n\n".join(f"{doc.metadata["source"]}:\n" + doc.page_content for doc in docs)
 
-    model = OpenAIEmbeddings(model="text-embedding-3-small")
-
-    # Change False to True to add documents from root
-    if settings["vs_load"]:
-        directory_path = settings["vs_path"]
-
-        if not os.path.exists(directory_path):
-            os.makedirs(directory_path)
-
-        if os.path.exists(directory_path) and os.path.isdir(directory_path):
-            shutil.rmtree(directory_path)
-            if verbose:
-                text = f"Directory '{directory_path}' and all its contents have been removed."
-                st.info(text)
-                st.session_state.messages.append({"role": role, "info": text})            
-                
-        else:
-            if verbose:
-                text = f"Directory '{directory_path}' does not exist or is not a directory."
-                st.info(text)
-                st.session_state.messages.append({"role": role, "info": text})
-                
-        loader = DirectoryLoader(root, glob=["**/*.docx","**/*.txt","**/*.pdf","**/*.sql"],
-                                exclude=["*0009. SCD SAP Commissions Discovery/*"],
-                                recursive=True)
-        docs = loader.load()
-        if verbose:
-            text = f"Documents loaded"
-            st.info(text)
-            st.session_state.messages.append({"role": role, "info": text})
-            
-        
-        # Here, we first split at paragraph level,
-        # if the chunk size exceeds, it will move onto the next separator, at sentence level,
-        # if it still exceeds, it will move onto the next separators.
-        # FOR CSV is better to use SQL
-        text_splitter = RecursiveCharacterTextSplitter(
-        separators=["\n\n","\n", ",", " "],
-        chunk_size = 500,
-        chunk_overlap = 100,
-        is_separator_regex=False
-        )
-
-        if verbose:
-            text = f"Text splitter loaded"
-            st.info(text)
-            st.session_state.messages.append({"role": role, "info": text})
-
-        # Walk through all directories and subdirectories
-        for dirpath, dirnames, filenames in os.walk(root):
-            for filename in filenames:
-                if filename.endswith('.csv'):
-                    # Construct the full path to the file
-                    file_path = os.path.join(dirpath, filename)
-                    loader = loader = CSVLoader(file_path, encoding="windows-1252")
-                    csv_docs = loader.load()
-                    docs = docs + csv_docs
-                    
-        if verbose:
-            text = f"CSV loaded"
-            st.info(text)
-            st.session_state.messages.append({"role": role, "info": text})
-        for doc in docs:
-            doc.metadata["source"] = doc.metadata["source"].replace("./","").replace("/","\\")
-        
-        splits = text_splitter.split_documents(docs)
-
-        if verbose:
-            text = f"Splits loaded"
-            st.info(text)
-            st.session_state.messages.append({"role": role, "info": text})
-
-        
-        # Embed
-        # This is our way to index the chunks for retrieval
-        # You have to check in your openai API subscription which embedding models you have available.
-        # You should already have saved the environment variable OPENAI_API_KEY in your system.
-
-        vectorstoredb = Chroma.from_documents(persist_directory=settings["vs_path"], documents=splits, embedding=model)
-        
-    else:
-        vectorstoredb = Chroma(persist_directory=settings["vs_path"], embedding_function=model)
-        
-    if verbose:
-            text = f"Vectorstore loaded"
-            st.info(text)
-            st.session_state.messages.append({"role": role, "info": text})
-
     # Helper functions
     def log_api_call(process_id,query,model,system_prompt,user_prompt,response):
         log_path = settings["log_path"]
@@ -207,8 +122,6 @@ def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},ro
                 ]) + "\n\n"
             )  # Add a new line after the text
         return None
-
-
 
     # Query ROUTING
     ## Returns JSON dictionary with question relationships
@@ -473,7 +386,7 @@ def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},ro
                                 "ico"]
         if extension in recognized_extensions:
             try:
-                st.image(input,use_column_width=True,caption=input)
+                st.image(input,use_column_width=True)
                 st.session_state.messages.append({"role": role, "image": input})
             except Exception as e:
                 st.exception(e)
@@ -775,9 +688,22 @@ def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},ro
         return query["output"]
         # Outputs string
 
+    if temp_file_path is not None:
+        query = {}
+        # Knowledge from file
+        query["question"]=q
+        query["input"]=temp_file_path
+        
+        result = knowledge_from_file(q,temp_file_path)
     
-    log_chat(process_id,">> " + q)
-
+        yield "\n\n" + result.replace("\n","\n\n")
+        log_chat(process_id,result)
+        if verbose: yield "\n\n```json\n" + str(query) + "\n```\n\n"
+        return
+    else:
+        print("No file path",temp_file_path) 
+        st.write()
+    
     questions = get_questions(q)
     image_name = q + process_id
     image_name = image_name[:50]
@@ -925,10 +851,10 @@ def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},ro
                         })"""
             yield "\n\n```json\n" + str(query) + "\n```\n\n"
 
-def get_answer(prompt,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'}):
+def get_answer(prompt,verbose,persist_directory=settings["vs_path"],avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},role="assistant",temp_file_path=None):
 
     role = "assistant"
     with st.chat_message("assistant",avatar=avatar.get("assistant")):
-        response = st.write_stream(qa(prompt,verbose,avatar=avatar))
+        response = st.write_stream(qa(prompt,verbose,persist_directory,avatar=avatar,temp_file_path=temp_file_path))
         st.session_state.messages.append({"role": role, "content": response})
-        
+    gc.collect()

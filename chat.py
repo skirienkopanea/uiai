@@ -1,3 +1,6 @@
+from langchain_openai import OpenAIEmbeddings
+from langchain_chroma import Chroma
+import tempfile
 import pythoncom
 import time
 import streamlit as st
@@ -8,6 +11,8 @@ import shutil
 import concurrent.futures
 from qa import get_answer
 import random
+from load_vs import load_kb_vs,load_temp_vs
+
 
 # TODO: Open emails: 
 # TODO: Export chat history, save chats, resume chats.
@@ -18,6 +23,9 @@ import random
 #TODO: support graphs, csv, tables
 #TODO: rag for single uploaded file
 #TODO: echo but with specified format i.e. json formatter, graph
+#TODO: use embbeding model as setting param
+#TODO: remove temp chroma db
+#TODO: use external vectorstore i.e. pinecone
 
 def response_generator(response=None):
     if response is None: response = random.choice(
@@ -48,35 +56,58 @@ with open(user_settings_path, 'r') as file:
     user_settings = json.load(file)
 verbose = user_settings.get('verbose', False)
 avatar = {"system": '📢', "user": '🧑', "assistant": '🤖'}
-st.sidebar.title("Upload File")
-uploaded_file = st.sidebar.file_uploader("Choose a file", type=["csv", "txt", "pdf", "doc", "docx","html","htm"])
-# Check if a file is uploaded
-if uploaded_file is not None:
-    st.sidebar.checkbox("Only use this file as context", value=True)
-    role = "system"
-    if verbose:
-        with st.chat_message(role,avatar=avatar.get(role)):
-            # Perform actions with the uploaded file, such as reading or displaying it
-            text = f"""Filename: {uploaded_file.name}
-            File type: {uploaded_file.type}
-            File size: {uploaded_file.size} bytes"""
-            st.info(text)
-            st.session_state.messages.append({"role": role, "info": text})
-            
-            # Example: Read and display text files
-            if uploaded_file.type == "text/csv":
-                import pandas as pd
-                df = pd.read_csv(uploaded_file)
-                st.write(df)
-                st.session_state.messages.append({"role": role, "content": df})
-    
-st.sidebar.markdown("----")
-st.sidebar.header("Settings")
-
+st.sidebar.title("Settings")
 verbose = st.sidebar.checkbox('Show logs', user_settings.get('verbose', False))
+st.sidebar.header("Document Search")
+uploaded_file = st.sidebar.file_uploader("Choose a file", type=["txt"])#, "docx", "doc", "pdf", "pptx", "ppt", "html", "md", "eml"])
+
+# Check if a file is uploaded
+rag_file_context_only = None
+filename = None
+apply_file = False
+temp_file_path = None #Update settings file store it in file session and pass it to get answer()
+temp_dir = None
+
+if 'last_uploaded_file_info' not in st.session_state:
+    st.session_state.last_uploaded_file_info = None
+    st.session_state.file_uploaded = False
+    st.session_state.temp_file_path = None
+    st.session_state.temp_file_dir = settings["vs_temp_path"]
 
 
+if uploaded_file is not None:
+    st.session_state.file_uploaded = True
+    filename = uploaded_file.name
+    current_file_info = (filename, uploaded_file.size)
 
+    # Update the session state with the current file's info
+    st.session_state.last_uploaded_file_info = current_file_info
+
+    rag_file_context_only = st.sidebar.checkbox("Only use this file as context", value=True)
+if st.sidebar.button('Update Database'):
+    apply_file = True
+    if rag_file_context_only is not True: rag_file_context_only = False
+    if uploaded_file is not None and rag_file_context_only:
+        if temp_dir is not None:
+            temp_dir.cleanup()
+        # Create a temporary directory to save the uploaded file
+        temp_dir = tempfile.TemporaryDirectory()    
+
+        st.session_state.temp_file_dir = os.path.join(settings["vs_temp_path"],os.path.basename(temp_dir.name))
+        # Define the file path
+        temp_file_path = os.path.join(temp_dir.name, uploaded_file.name)
+        # Save the uploaded file to the temporary directory
+        with open(temp_file_path, "wb") as f:
+            f.write(uploaded_file.getvalue())
+        
+        if verbose:
+            role = "system"
+            text = f"""File uploaded to {temp_file_path}"""
+            st.session_state.messages.append({"role": role, "info": text})
+        st.session_state.temp_file_path = temp_file_path
+k = st.sidebar.number_input('Paragraph search count', min_value=1, value=user_settings.get('k', 4))
+threshold = st.sidebar.number_input('Semantic relevance', min_value=0.01, step=0.01, format="%0.2f", value=user_settings.get('threshold', 0.01))
+st.sidebar.markdown("----")
 
 def load_outlook(role="assistant",avatar=avatar):
     with st.chat_message(role,avatar=avatar.get(role)):
@@ -93,14 +124,14 @@ def load_outlook(role="assistant",avatar=avatar):
             if verbose:
                 yield(f"\n\nDirectory '{directory_path}' does not exist.")
         
-        file_path = settings["db_path"]
-        if os.path.exists(file_path) and os.path.isfile(file_path):
-                    os.remove(file_path)
+        db_file_path = settings["db_path"]
+        if os.path.exists(db_file_path) and os.path.isfile(db_file_path):
+                    os.remove(db_file_path)
                     if verbose:
-                        yield(f"\n\nFile '{file_path}' has been removed.")
+                        yield(f"\n\nFile '{db_file_path}' has been removed.")
         else:
             if verbose:
-                yield(f"\n\nDirectory '{file_path}' does not exist.")
+                yield(f"\n\nDirectory '{db_file_path}' does not exist.")
 
     
     role = "system"
@@ -131,13 +162,57 @@ def load_outlook(role="assistant",avatar=avatar):
     finally:
         pythoncom.CoUninitialize()  # Uninitialize COM library
   
+
+# Sidebar inputs with prefilled values from settings
+#kb_root_path = st.sidebar.text_input('Knowledge Base Root', settings.get('kb_root_path', './data/KnowledgeBase'))
+# Add a button to the sidebar
+openai_api_key = st.sidebar.text_input('OpenAI API Key', user_settings.get('OPENAI_API_KEY', os.environ["OPENAI_API_KEY"]), type='password')
+
+st.sidebar.header("Outlook Data")
+if os.environ["OPENAI_API_KEY"] is None: os.environ["OPENAI_API_KEY"] = user_settings["OPENAI_API_KEY"]
+email_address = st.sidebar.text_input('Email Address', user_settings.get('email_address', 'sergio.kirienko@inycom.es'))
+email_folder = st.sidebar.text_input('Email Folder', user_settings.get('email_folder', 'Inbox'))
+email_count = st.sidebar.number_input('Email Count', min_value=0, value=user_settings.get('email_count', 50))
+appointment_count = st.sidebar.number_input('Appointment Count', min_value=0, value=user_settings.get('appointment_count', 5))
+# Create a dictionary with the updated settings
+updated_settings = {
+    "rag_file_context_only": rag_file_context_only,
+    "k": k,
+    "threshold": threshold,
+    "verbose": verbose,
+    "email_address": email_address,
+    "email_folder": email_folder,
+    "email_count": email_count,
+    "appointment_count": appointment_count,
+    "OPENAI_API_KEY": openai_api_key
+}
+
+# Write the updated settings to the JSON file whenever a value changes
+def update_settings():
+    with open(user_settings_path, 'w') as file:
+        json.dump(updated_settings, file, indent=4)
+
+# Check if any of the sidebar inputs have changed and update the settings file
+if st.session_state.get('updated_settings', None) != updated_settings:
+    st.session_state['updated_settings'] = updated_settings
+    update_settings()
+
+###-- Button logic
+
+if st.sidebar.button('Load Outlook Data'):
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        load_outlook("assistant")
+        # let each output to chat declare its own message append
+
+###--Initalise chat
+
 # Function to render a message
 def render_message(message):
 
     #avatar=st.image(f'path_to_image')
     with st.chat_message(message["role"],avatar=avatar.get(message['role'])):
         if "image" in message:
-            st.image(message["image"], use_column_width=True, caption=message["image"])
+            st.image(message["image"], use_column_width=True)
         if "video" in message:
             st.video(message["video"])
         if "df" in message:
@@ -167,45 +242,44 @@ def render_message(message):
         if "content" in message:
             st.markdown(message["content"])
 
-# Sidebar inputs with prefilled values from settings
-#kb_root_path = st.sidebar.text_input('Knowledge Base Root', settings.get('kb_root_path', './data/KnowledgeBase'))
-# Add a button to the sidebar
-openai_api_key = st.sidebar.text_input('OpenAI API Key', user_settings.get('OPENAI_API_KEY', ''), type='password')
-if os.environ["OPENAI_API_KEY"] is None: os.environ["OPENAI_API_KEY"] = user_settings["OPENAI_API_KEY"]
-email_address = st.sidebar.text_input('Email Address', user_settings.get('email_address', 'sergio.kirienko@inycom.es'))
-email_folder = st.sidebar.text_input('Email Folder', user_settings.get('email_folder', 'Inbox'))
-email_count = st.sidebar.number_input('Email Count', min_value=0, value=user_settings.get('email_count', 50))
-appointment_count = st.sidebar.number_input('Appointment Count', min_value=0, value=user_settings.get('appointment_count', 5))
-# Create a dictionary with the updated settings
-updated_settings = {
-    "verbose": verbose,
-    "email_address": email_address,
-    "email_folder": email_folder,
-    "email_count": email_count,
-    "appointment_count": appointment_count,
-    "OPENAI_API_KEY": openai_api_key
-}
-
-# Write the updated settings to the JSON file whenever a value changes
-def update_settings():
-    with open(user_settings_path, 'w') as file:
-        json.dump(updated_settings, file, indent=4)
-
-# Check if any of the sidebar inputs have changed and update the settings file
-if st.session_state.get('updated_settings', None) != updated_settings:
-    st.session_state['updated_settings'] = updated_settings
-    update_settings()
-
 # Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
-    # Welcome message
-    with st.chat_message("assistant",avatar=avatar.get("assistant")):
-        response = st.write_stream(response_generator())
-        # But dont log it to history, it disappears after first message.
+
 # Display chat messages from history
 for message in st.session_state.messages:
     render_message(message)
+
+if len(st.session_state.messages) == 0:
+    with st.chat_message("assistant",avatar=avatar.get("assistant")):
+        response = st.write_stream(response_generator())
+        st.session_state.messages.append({"role": "assistant", "content": response})
+
+# Load Vectorstore before asking for user input
+  
+if rag_file_context_only and apply_file and st.session_state.file_uploaded:
+    role = "assistant"
+    with st.chat_message(role,avatar=avatar.get(role)):
+        text = f"""Okay, I will use {filename} as the only context for my answers. With pagraph count {k} and threshold {str(threshold)}."""
+        st.write_stream(response_generator(text))
+        st.session_state.messages.append({"role": role, "content": text})
+    try:
+        load_temp_vs(st.session_state.temp_file_path,verbose,st.session_state.temp_file_dir)
+    except Exception as e:
+        st.exception(e)
+        
+if rag_file_context_only is False and apply_file and rag_file_context_only is not None:
+    role = "assistant"
+    with st.chat_message(role,avatar=avatar.get(role)):
+        text = f"""Okay, I will use all the files in the knowledge base for my answers.
+        With pagraph count {k} and threshold {str(threshold)}. Knoweledge base: {settings["kb_root_path"]}"""
+        st.write_stream(response_generator(text))
+        st.session_state.messages.append({"role": role, "content": text})
+        st.session_state.temp_file_path = None
+    try:
+        load_kb_vs(None,verbose)
+    except Exception as e:
+        st.exception(e)
 
 # React to user input
 if prompt := st.chat_input("What do you need to know?"):
@@ -218,10 +292,9 @@ if prompt := st.chat_input("What do you need to know?"):
 
     # Call qa.apy method
     # Split qa script in vectorstore load, and qa only
-    
-    get_answer(prompt,verbose,avatar=avatar)
-
-if st.sidebar.button('Load Outlook Data'):
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        load_outlook("assistant")
-        # let each output to chat declare its own message append
+    print(st.session_state.temp_file_path)
+    if rag_file_context_only and st.session_state.temp_file_path is not None:
+        get_answer(prompt,verbose,persist_directory=st.session_state.temp_file_dir,avatar=avatar,temp_file_path=st.session_state.temp_file_path)
+    else:
+        persist_directory=settings["vs_path"]
+        get_answer(prompt,verbose,persist_directory=persist_directory,avatar=avatar)

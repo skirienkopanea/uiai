@@ -1,8 +1,11 @@
 {
+    "rag_file_context_only": true,
+    "k": 6,
+    "threshold": 0.01,
     "verbose": true,
-    "email_address": "sergio.kirienko@inycom.es",
+    "email_address": "<your_email_address>",
     "email_folder": "Inbox",
     "email_count": 50,
     "appointment_count": 5,
-    "OPENAI_API_KEY": "<your_openai_api_key>"
+    "OPENAI_API_KEY": ""
 }
