@@ -82,7 +82,7 @@ def load_emails():
         message_count += 1
         if message_count >= settings["email_count"]:
             break
-
+    message_list = sorted(message_list, key=lambda x: x.SentOn.strftime('%Y-%m-%d %H:%M:%S'), reverse=False)
     # Iterate through the messages
     for message in message_list:
 

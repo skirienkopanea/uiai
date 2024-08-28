@@ -1,6 +1,6 @@
 {
-    "verbose": false,
-    "email_address": "sample@email.com",
+    "verbose": true,
+    "email_address": "sergio.kirienko@inycom.es",
     "email_folder": "Inbox",
     "email_count": 50,
     "appointment_count": 5,

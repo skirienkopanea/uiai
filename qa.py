@@ -1,4 +1,4 @@
-import pythoncom
+import mimetypes
 import inspect
 import sys
 from colorama import Fore, Back, Style, init
@@ -225,10 +225,12 @@ def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},ro
         Play Video (5),
         Show image (6),
         Play audio (7),
-        Print subset data of file contents to console (12),
         Question about specific knowledge from the file(8),
         Questions from online source (9),
-        Questions without specified online source nor file source (10)
+        Questions without specified online source nor file source (10),
+        Open local html file (11),
+        Print subset data of file contents to console (12),        
+        
     Your answer must be an array in JSON format containing for each question/action the attributes: "question", "question_id", "category", "category_id", "input_from", "output_to".
         "question_id" is an increment by 1 id starting at 0.
         "output_to" and "input_from" are a single integer that refers to "question_id" or null if they don't refer to any question id.
@@ -237,7 +239,7 @@ def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},ro
             "Print to console",
             "Question about specific knowledge from the file"
     You'll split the prompt into question/action such that there are no duplicate "question".
-    The following categories must take input from a "File/Directory search" question:
+    The questions with following categories must take input from a "File/Directory search" question. So make sure to create a "File/Directory search" type question as input source for questions with these categories:
         List file/folder names inside found directory (3),
         Print entire file contents without modifications to console (4),
         Question about specific knowledge from the file(8),
@@ -245,6 +247,7 @@ def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},ro
         Play Video (5),
         Show image (6),
         Play audio (7),
+        Open local html file (11),
     For "Questions from online source" (9), keep any mentioned online source in the question text.
     Keep the original language used in the question.
     """
@@ -437,129 +440,90 @@ def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},ro
     
     ## Category 5 Play video
     def play_video(query,input):
-        result = ""
-        if input is not None:
-            if os.path.exists(str(input)):
-                st.video(str(input))
-            else:
-                paths = clean_path(query,input)
-                try:
-                    
-                    for path in paths:
-                        if os.path.isdir(path):
-                        # Iterate over all files in the directory
-                            for entry in os.listdir(path):
-                                entry_path = os.path.join(path, entry)
-                                st.video(entry_path)
-                                st.session_state.messages.append({"role": role, "video": entry_path})
-                        else:
-                            st.video(path)
-                            st.session_state.messages.append({"role": role, "video": path})
-                except Exception as e:
-                    st.exception(e)
-        else:
-            paths = clean_path("Find the video paths in the text",query)
+        extension = input.split(".")[-1]
+        recognized_extensions = ["mp4", "ogg", "webm"]
+        if extension in recognized_extensions:
             try:
-                    
-                    for path in paths:
-                        if os.path.isdir(path):
-                        # Iterate over all files in the directory
-                            for entry in os.listdir(path):
-                                entry_path = os.path.join(path, entry)
-                                st.video(entry_path)
-                                st.session_state.messages.append({"role": role, "video": entry_path})
-                        else:
-                            st.video(path)
-                            st.session_state.messages.append({"role": role, "video": path})
+                st.video(input)
+                st.session_state.messages.append({"role": role, "video": input})
             except Exception as e:
                 st.exception(e)
-        log_api_call(process_id,query,"os",f'st.video("{input}")','st.video',result)
-        
-        ## Category 6 Show image
+            log_api_call(process_id,query,"os",f'st.video("{input}")','st.video',input)
+        else:
+            text = f"""{input} does not have recognized video extension ({extension}).
+            The recognized extensions are: {", ".join(recognized_extensions)}."""
+            st.warning(text)
+            st.session_state.messages.append({"role": role, "warning": text})
+        return input
+    
+        ## Category 6 show image
     def show_image(query,input):
-        result = ""
-        if input is not None:
-            if os.path.exists(str(input)):
-                st.image(str(input))
-            else:
-                paths = clean_path(query,input)
-                try:
-                    
-                    for path in paths:
-                        if os.path.isdir(path):
-                        # Iterate over all files in the directory
-                            for entry in os.listdir(path):
-                                entry_path = os.path.join(path, entry)
-                                st.image(entry_path)
-                                st.session_state.messages.append({"role": role, "image": entry_path})
-                        else:
-                            st.image(path)
-                            st.session_state.messages.append({"role": role, "image": path})
-                except Exception as e:
-                    st.exception(e)
-        else:
+        extension = input.split(".")[-1]
+        recognized_extensions = [  "jpg",
+                                "jpeg", 
+                                "png", 
+                                "gif", 
+                                "bmp", 
+                                "tiff", ".tif", 
+                                "webp", 
+                                "svg", 
+                                "heic", ".heif", 
+                                "raw", 
+                                "ico"]
+        if extension in recognized_extensions:
             try:
-                for path in input:
-                    st.image(path)
-                    st.session_state.messages.append({"role": role, "image": path})
-            except Exception as e:
-                    st.exception(e)
-                    paths = clean_path("Find the image paths in the text",query)
-            try:
-                    
-                    for path in paths:
-                        if os.path.isdir(path):
-                        # Iterate over all files in the directory
-                            for entry in os.listdir(path):
-                                entry_path = os.path.join(path, entry)
-                                st.image(entry_path)
-                                st.session_state.messages.append({"role": role, "image": entry_path})
-                        else:
-                            st.image(path)
-                            st.session_state.messages.append({"role": role, "image": path})
+                st.image(input,use_column_width=True,caption=input)
+                st.session_state.messages.append({"role": role, "image": input})
             except Exception as e:
                 st.exception(e)
-        log_api_call(process_id,query,"os",f'st.image("{input}")','st.image',result)
-    #TODO: Abstract this to play_media class and only change st.video,st.image,st.audio,st.graph...    
+            log_api_call(process_id,query,"os",f'st.image("{input}")','st.image',input)
+        else:
+            text = f"""{input} does not have recognized image extension ({extension}).
+            The recognized extensions are: {", ".join(recognized_extensions)}."""
+            st.warning(text)
+            st.session_state.messages.append({"role": role, "warning": text})
+        return input
     ## Category 7 Play audio
     def play_audio(query,input):
-        result = ""
-        if input is not None:
-            if os.path.exists(str(input)):
-                st.audio(str(input))
-            else:
-                paths = clean_path(query,input)
-                try:
-                    
-                    for path in paths:
-                        if os.path.isdir(path):
-                        # Iterate over all files in the directory
-                            for entry in os.listdir(path):
-                                entry_path = os.path.join(path, entry)
-                                st.audio(entry_path)
-                                st.session_state.messages.append({"role": role, "audio": entry_path})
-                        else:
-                            st.audio(path)
-                            st.session_state.messages.append({"role": role, "audio": path})
-                except Exception as e:
-                    st.exception(e)
-        else:
-            paths = clean_path("Find the audio paths in the text",query)
+        extension = input.split(".")[-1]
+        recognized_extensions = ["wav", "mp3", "ogg"]
+        if extension in recognized_extensions:
             try:
-                    
-                    for path in paths:
-                        if os.path.isdir(path):
-                        # Iterate over all files in the directory
-                            for entry in os.listdir(path):
-                                entry_path = os.path.join(path, entry)
-                                st.audio(entry_path)
-                                st.session_state.messages.append({"role": role, "audio": entry_path})
-                        else:
-                            st.audio(path)
-                            st.session_state.messages.append({"role": role, "audio": path})
+                st.audio(input)
+                st.session_state.messages.append({"role": role, "audio": input})
             except Exception as e:
                 st.exception(e)
-        log_api_call(process_id,query,"os",f'st.audio("{input}")','st.audio',result)
+            log_api_call(process_id,query,"os",f'st.audio("{input}")','st.audio',input)
+        else:
+            text = f"""{input} does not have recognized audio extension ({extension}).
+            The recognized extensions are: {", ".join(recognized_extensions)}."""
+            st.warning(text)
+            st.session_state.messages.append({"role": role, "warning": text})
+        return input
+    
+    ## Category 5 Play video
+    def open_html(query,input):
+        extension = input.split(".")[-1]
+        recognized_extensions = ["htm","html"]
+        if extension in recognized_extensions:
+            try:
+                # Read the HTML file
+                with open(input, 'r', encoding='utf-8') as file:
+                    html_content = file.read()
+
+                # Display the HTML content in Streamlit
+                st.components.v1.html(html_content, height=600, scrolling=True)
+                st.session_state.messages.append({"role": role, "html": input})
+            except Exception as e:
+                st.exception(e)
+            log_api_call(process_id,query,"os",f'with open("{input}")','open html',input)
+        else:
+            text = f"""{input} does not have recognized html extension ({extension}).
+            The recognized extensions are: {", ".join(recognized_extensions)}."""
+            st.warning(text)
+            st.session_state.messages.append({"role": role, "warning": text})
+        return input
+    
     ## Category 7 Summarize file
     def summarize_file(query,path):
 
@@ -878,15 +842,8 @@ def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},ro
                 for statement in output[1]:
                     df = pd.DataFrame(statement["rows"], columns=statement["columns"])
                     result = df.to_markdown(index=False).replace("--","-").replace("  "," ").replace("\t\t","\t")
-                    if len(result) < 1024:
-                        if len(result) < 1000:
-                            #printlist.append({"content":result,"role":"assistant"})
-                            yield "\n\n" +  result
-                            log_chat(process_id,result)
-                        else:
-                            #printlist.append({"content":result[:1000] + "\n...","role":"assistant"})
-                            yield "\n\n" +  result
-                            log_chat(process_id,result[:1000] + "\n...")
+                    yield "\n\n" +  result
+                    log_chat(process_id,result)
 
         # Read directory
         if query["category_id"] == 3:
@@ -912,13 +869,16 @@ def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},ro
                 log_chat(process_id,result)
 
         if query["category_id"] == 5: 
-            play_video(query["question"],query["input"])
+            query_path_loop_category_execution_helper(query,play_video)
 
         if query["category_id"] == 6: 
-            show_image(query["question"],query["input"])
+            query_path_loop_category_execution_helper(query,show_image)
 
         if query["category_id"] == 7: 
-            play_audio(query["question"],query["input"])
+            query_path_loop_category_execution_helper(query,play_audio)
+
+        if query["category_id"] == 11: 
+            query_path_loop_category_execution_helper(query,open_html)
             
         
         # Summarize file

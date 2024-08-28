@@ -9,10 +9,6 @@ import concurrent.futures
 from qa import get_answer
 import random
 
-# TODO: stream images
-# TODO: Open images
-# TODO: Open videos
-# TODO: Open audios
 # TODO: Open emails: 
 # TODO: Export chat history, save chats, resume chats.
 # import streamlit as st
@@ -121,7 +117,17 @@ def render_message(message):
     #avatar=st.image(f'path_to_image')
     with st.chat_message(message["role"],avatar=avatar.get(message['role'])):
         if "image" in message:
-            st.image(message["image"], use_column_width=True)
+            st.image(message["image"], use_column_width=True, caption=message["image"])
+        if "video" in message:
+            st.video(message["video"])
+        if "html" in message:
+            # Read the HTML file
+                with open(message["html"], 'r', encoding='utf-8') as file:
+                    html_content = file.read()
+                # Display the HTML content in Streamlit
+                st.components.v1.html(html_content, height=600, scrolling=True)
+        if "audio" in message:
+            st.audio(message["audio"])
         if "code" in message:
             st.code(message["code"],language=message["language"])
         if "warning" in message:

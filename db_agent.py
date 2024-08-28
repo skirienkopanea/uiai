@@ -11,6 +11,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 import pandas as pd
 from io import StringIO
 import json
+from datetime import datetime
 
 def get_query(question):
     schema = ""
@@ -27,6 +28,14 @@ def get_query(question):
     Additional requirements:
     Any column from the schema that exceeds 255 characters must be encapsulated inside SUBSTR(column_name, 1, 255).
     Always use case insensitive search for LIKE clauses and %search term% except when the search term is enclosed by single or double quotes in the user prompt.
+    For DATE operations remember that DATES take the value from message.SentOn.strftime('%Y-%m-%d %H:%M:%S')
+    and that the system current time in YYYY-MM-DD_HH-MM is {datetime.now().strftime("%Y-%m-%d_%H-%M")}
+    Unless explicitly required, never return these EMAIL columns:
+        "FROM_ADDRESS",
+        "TO_ADDRESS",
+        "CC_ADDRES",
+        "BODY",
+        "EMAILID".
     """
     try:
         client = OpenAI()
