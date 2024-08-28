@@ -1,3 +1,4 @@
+from io import StringIO
 import mimetypes
 import inspect
 import sys
@@ -562,17 +563,7 @@ def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},ro
             query =  query + "\nContext: " + input
 
         output = sqlquery(query)
-        log_api_call(process_id,query,"sql agent","",query,output)
-
-        result = ""
-        for statement in output:
-            if "columns" in statement:
-                result += '"' + '","'.join([str(s).replace('"', '""') for s in statement["columns"]]) + "\"\n"
-            if "rows" in statement:
-                for row in statement["rows"]:
-                    result += '"' + '","'.join([str(s).replace('"', '""') for s in row]) + "\"\n"
-
-        return [result,output]
+        return output
 
     # Category 8 or 12 filter RAG with path file
     def knowledge_from_file(query,path):
@@ -836,14 +827,15 @@ def qa(q,verbose,avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},ro
         # Search email
         if query["category_id"] in (0,1): 
             output = search_email(query["question"],query["input"])
-            query["output"] = output[0] #plain text
+            query["output"] = "\n\n".join(output)
             if query["output_to"] is None:
                 # Create DataFrame from rows and column names
-                for statement in output[1]:
-                    df = pd.DataFrame(statement["rows"], columns=statement["columns"])
-                    result = df.to_markdown(index=False).replace("--","-").replace("  "," ").replace("\t\t","\t")
-                    yield "\n\n" +  result
-                    log_chat(process_id,result)
+                for csv_string in output:
+                    csv_data = StringIO(csv_string)
+                    df = pd.read_csv(csv_data)
+                    st.write(df)
+                    st.session_state.messages.append({"role": role, "df": df})
+                    log_chat(process_id,csv_string)
 
         # Read directory
         if query["category_id"] == 3:

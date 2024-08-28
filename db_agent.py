@@ -82,15 +82,9 @@ def execute_query(query: str) -> str:
 
             # Create DataFrame from rows and column names
             df = pd.DataFrame(rows, columns=column_names)
-
-            dict = {
-            "query": query,
-            "columns": column_names,
-            "rows": rows
-            }
-
-            # Convert the DataFrame to a Markdown table
-            result.append(dict)
+            # Convert DataFrame to CSV string
+            csv_string = df.to_csv(index=False)
+            result.append(csv_string)
 
             # Commit the changes
             conn.commit()

@@ -34,7 +34,6 @@ def response_generator(response=None):
 st.set_page_config(page_title="🤖🔗 SAP Bot")
 st.title('🤖🔗 SAP Bot')
 
-st.sidebar.header("Settings")
 # Define the path to the settings file
 settings_path = 'settings.json'
 
@@ -47,15 +46,36 @@ user_settings_path = 'user_settings.json'
 # Load settings from the file
 with open(user_settings_path, 'r') as file:
     user_settings = json.load(file)
+verbose = user_settings.get('verbose', False)
+avatar = {"system": '📢', "user": '🧑', "assistant": '🤖'}
+st.sidebar.title("Upload File")
+uploaded_file = st.sidebar.file_uploader("Choose a file", type=["csv", "txt", "pdf", "doc", "docx","html","htm"])
+# Check if a file is uploaded
+if uploaded_file is not None:
+    st.sidebar.checkbox("Only use this file as context", value=True)
+    role = "system"
+    if verbose:
+        with st.chat_message(role,avatar=avatar.get(role)):
+            # Perform actions with the uploaded file, such as reading or displaying it
+            text = f"""Filename: {uploaded_file.name}
+            File type: {uploaded_file.type}
+            File size: {uploaded_file.size} bytes"""
+            st.info(text)
+            st.session_state.messages.append({"role": role, "info": text})
+            
+            # Example: Read and display text files
+            if uploaded_file.type == "text/csv":
+                import pandas as pd
+                df = pd.read_csv(uploaded_file)
+                st.write(df)
+                st.session_state.messages.append({"role": role, "content": df})
+    
+st.sidebar.markdown("----")
+st.sidebar.header("Settings")
 
 verbose = st.sidebar.checkbox('Show logs', user_settings.get('verbose', False))
 
 
-avatar = {
-        "system": '📢',
-        "user": '🧑',
-        "assistant": '🤖'
-    }
 
 
 def load_outlook(role="assistant",avatar=avatar):
@@ -120,6 +140,8 @@ def render_message(message):
             st.image(message["image"], use_column_width=True, caption=message["image"])
         if "video" in message:
             st.video(message["video"])
+        if "df" in message:
+            st.write(message["df"])
         if "html" in message:
             # Read the HTML file
                 with open(message["html"], 'r', encoding='utf-8') as file:
