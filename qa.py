@@ -1,3 +1,5 @@
+from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+from chromadb import PersistentClient
 from io import StringIO
 import mimetypes
 import inspect
@@ -19,8 +21,6 @@ import pandas as pd
 import streamlit as st
 import re
 import gc
-
-
 
 # to do: make only rag assistant in other script 
 # this script only for RAG, replace vectorstoredb for large scale db
@@ -45,11 +45,22 @@ with open(user_settings_path, 'r') as file:
 
 
 if os.environ["OPENAI_API_KEY"] is None: os.environ["OPENAI_API_KEY"] = settings["OPENAI_API_KEY"]
-model = OpenAIEmbeddings(model="text-embedding-3-small")
+model = OpenAIEmbeddings(model=settings["embbedings_model"])
 
-def qa(q,verbose,persist_directory=settings["vs_path"],avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},role="assistant",temp_file_path=None):
+def qa(q,verbose,k,persist_directory=settings["vs_path"],avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},role="assistant",temp_file_path=None):
     vectorstoredb = Chroma(persist_directory=persist_directory,embedding_function=model)
+    try:
+        embedding_function = OpenAIEmbeddingFunction(api_key=os.environ.get('OPENAI_API_KEY'), model_name=settings["embbedings_model"])
+        chroma_client = PersistentClient(path=persist_directory)
+        collection_name = "file-contents"
+        collection = chroma_client.get_collection(collection_name,embedding_function=embedding_function)
 
+        print(f"Collection '{collection_name}' retrieved successfully.")
+    except Exception as e:
+        print(f"Failed to retrieve the collection: {e}")
+        text = f"Could not load collection {collection_name} from {persist_directory}."
+        st.error(text)
+        st.session_state.messages.append({"role": role, "error": text})
     if not verbose:
         warnings.filterwarnings("ignore")
     # Full path to the log file
@@ -84,13 +95,7 @@ def qa(q,verbose,persist_directory=settings["vs_path"],avatar={"system": '📢',
 
     # Load data
     root = settings["kb_root_path"]
-
-    # Post-processing
-    def context_docs(docs):
-        return "\n\n".join(doc.page_content for doc in docs)
-    def source_docs(docs):
-        return "\n\n".join(f"{doc.metadata["source"]}:\n" + doc.page_content for doc in docs)
-
+    
     # Helper functions
     def log_api_call(process_id,query,model,system_prompt,user_prompt,response):
         log_path = settings["log_path"]
@@ -480,45 +485,46 @@ def qa(q,verbose,persist_directory=settings["vs_path"],avatar={"system": '📢',
 
     # Category 8 or 12 filter RAG with path file
     def knowledge_from_file(query,path):
-
+        if verbose:
+            text = f"Calling '{inspect.currentframe().f_code.co_name}' query: '{query}', input: '{path}', k: '{k}'."
+            st.info(text)
+            st.session_state.messages.append({"role": role, "info": text})
         header = ""
         context = str(path) # is not a path but a string input
 
-        if isinstance(path,str):
-            extension = path.split('.')[-1]
-        else:
-            extension = "",
-        # Clean query and clean path has to be done outside, because im probably gonna append the contents of the path that are not paths to the query and keep the paths variable just for paths
+    
+        system_prompt = f"""Answer the question about the contents of the file. Don't use outside information.
+    If the path or the context from the file are empty say "Couldn't match any info based on your query. Try to type your query differently".
+    Be as concise as possible and use the language used in the question."""
         
+        results = collection.query(query_texts=query, n_results=k, include=['distances','documents','metadatas']
+            ,where={"source" : str(path).replace("./","").replace("\\","/")}
+            ) 
+        print("input",str(path).replace("./","").replace("\\","/"))
+        df = pd.DataFrame({
+                'id':results['ids'][0], 
+                'score':results['distances'][0],
+                'documents': results['documents'][0],
+                'metadatas': results['metadatas'][0]
+                })
+        #filter by file and by distance
         
+        #retrieved_docs = retriever.invoke(query)
 
-        if extension == "csv":
-            
-            with open(path, "r") as file:
-            # Reading from a file
-                header = file.readline()
-            system_prompt = f"""Answer the question about the contents of the CSV file with the following header: {header}"""
-            # substitute retireved_docs with sql upload and sql agent
-            retrieved_docs = vectorstoredb.similarity_search(query,k=3,filter={'source':str(path).replace("./","").replace("/","\\")})
-            
-        else:
-            system_prompt = f"""Answer the question about the contents of the file. Don't use outside information.
-        If the path or the context from the file are empty say "Couldn't match any info based on your query. Try to type your query differently".
-        Be as concise as possible and use the language used in the question."""
+        retrieved_docs = results['documents'][0]
 
-            retriever = vectorstoredb.as_retriever(
-                search_type="similarity_score_threshold",
-                search_kwargs={'score_threshold': 0.01,
-                            "k":3,
-                            'filter': {'source':str(path).replace("./","").replace("/","\\")}})
+        #context = context_docs(retrieved_docs)
+        context = "\n\n".join(retrieved_docs)
+        context_with_source = "\n\n------\n\n".join(df.apply(lambda row: f"Source: [{os.path.basename(row['metadatas']['source'])}]({row['metadatas']['source']})\n\nContent: {row['documents']}", axis=1))
+        if verbose:
+            text = f"Retrieved context '{context_with_source}'."
+            st.info(text)
+            st.session_state.messages.append({"role": role, "info": text})
             
-            retrieved_docs = retriever.invoke(query)
-
-        context = context_docs(retrieved_docs)
         if len(context) == 0:
             context = str(path)
             
-            text = f"Warning: Context file \"{path[:100]}\" couldn't match any info based on your query. Try to type your query differently."
+            text = f"Warning: Context file \"{path[:100]}\" couldn't match any info based on your query with k: '{k}'. Try to type your query differently or adjust the search paramaters."
             st.warning(text)
             st.session_state.messages.append({"role": role, "warning": text})
         
@@ -556,7 +562,8 @@ def qa(q,verbose,persist_directory=settings["vs_path"],avatar={"system": '📢',
 
         model = "gpt-4o-mini" #check this
         system_prompt = f"""Answer the question using, if specified, the online source.
-        The answer must include at the end the online source(s) used for the answer.
+        The answer must include at the end the online source(s) used for the answer in markdown format for a clickable link in this format:
+            "Source: [Web Title](url)"
         The answer and the source paraghs must not come with any further explanation, be as concise as possible.
         Keep the original language used in the question."""
         user_prompt = f"Question: {query}"
@@ -588,22 +595,31 @@ def qa(q,verbose,persist_directory=settings["vs_path"],avatar={"system": '📢',
     def knowledge_from_online_source_or_all_files(query,input):
         
         query = clean_question(query)
-
+        if verbose:
+            text = f"Calling '{inspect.currentframe().f_code.co_name}' query: '{query}', input: '{input}', k: '{k}'."
+            st.info(text)
+            st.session_state.messages.append({"role": role, "info": text})
         # Instead of json the context must include a source path and ask chat gpt to return the source path used or "gpt kb"
         system_prompt = f"""Answer the question using the context info. If the context info is not enough to provide an answer, you can use other sources of information.
-        The answer must include at the end the file path or online source(s) of the context used for the answer. The answer and the source paraghs must not come with any further explanation, be as concise as possible.
+        The answer must include at the end the file path or online source(s) of the context used for the answer in markdown format for a clickable link in this format:
+            "Source: [File name/Web Title](File path/web url)"
+        The answer and the source paraghs must not come with any further explanation, be as concise as possible.
         """
         if input is not None:
             context_with_source = input
         else:
-            retriever = vectorstoredb.as_retriever(
-                search_type="similarity_score_threshold",
-                search_kwargs={'score_threshold': 0.01,
-                            "k":5}
-                            )
-            
-            retrieved_docs = retriever.invoke(query)
-            context_with_source = source_docs(retrieved_docs) #with source version
+            results = collection.query(query_texts=query, n_results=k, include=['distances','documents','metadatas']) 
+            df = pd.DataFrame({
+                        'id':results['ids'][0], 
+                        'score':results['distances'][0],
+                        'documents': results['documents'][0],
+                        'metadatas': results['metadatas'][0]
+                        })
+            context_with_source = "\n\n------\n\n".join(df.apply(lambda row: f"Source: [{os.path.basename(row['metadatas']['source'])}]({row['metadatas']['source']})\n\nContent: {row['documents']}", axis=1))
+            if verbose:
+                text = f"Retrieved context with source '{context_with_source}'."
+                st.info(text)
+                st.session_state.messages.append({"role": role, "info": text})
             
         model = "gpt-4o-mini" # Check this
 
@@ -688,7 +704,8 @@ def qa(q,verbose,persist_directory=settings["vs_path"],avatar={"system": '📢',
         return query["output"]
         # Outputs string
 
-    if temp_file_path is not None:
+    if persist_directory == settings["vs_temp_path"] and temp_file_path is not None:
+        yield "\n\nSearching in document..."
         query = {}
         # Knowledge from file
         query["question"]=q
@@ -700,9 +717,10 @@ def qa(q,verbose,persist_directory=settings["vs_path"],avatar={"system": '📢',
         log_chat(process_id,result)
         if verbose: yield "\n\n```json\n" + str(query) + "\n```\n\n"
         return
+        
     else:
         print("No file path",temp_file_path) 
-        st.write()
+        yield "\n\nSearching in knowledge base..."
     
     questions = get_questions(q)
     image_name = q + process_id
@@ -851,10 +869,10 @@ def qa(q,verbose,persist_directory=settings["vs_path"],avatar={"system": '📢',
                         })"""
             yield "\n\n```json\n" + str(query) + "\n```\n\n"
 
-def get_answer(prompt,verbose,persist_directory=settings["vs_path"],avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},role="assistant",temp_file_path=None):
+def get_answer(prompt,verbose,k,persist_directory=settings["vs_path"],avatar={"system": '📢',"user": '🧑',"assistant": '🤖'},role="assistant",temp_file_path=None):
 
     role = "assistant"
     with st.chat_message("assistant",avatar=avatar.get("assistant")):
-        response = st.write_stream(qa(prompt,verbose,persist_directory,avatar=avatar,temp_file_path=temp_file_path))
+        response = st.write_stream(qa(prompt,verbose,k,persist_directory,avatar=avatar,temp_file_path=temp_file_path))
         st.session_state.messages.append({"role": role, "content": response})
-    gc.collect()
+    

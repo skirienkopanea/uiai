@@ -11,10 +11,13 @@ import shutil
 import concurrent.futures
 from qa import get_answer
 import random
-from load_vs import load_kb_vs,load_temp_vs
+from load_vs import load_vs
 
-
-# TODO: Open emails: 
+#TODO: Use a Local HTTP Server to Serve Files
+#TODO: use collection for filepaths instead of passing all of them as context
+#TODO: replace yields in qa for with context so that messages and logs get stored in the right order
+#TODO: remove repeated lines of code in answer
+# TODO: Make KB load like TEMP load and make qa vectorstore retrieval like single file
 # TODO: Export chat history, save chats, resume chats.
 # import streamlit as st
 # import streamlit.components.v1 as components
@@ -72,7 +75,6 @@ if 'last_uploaded_file_info' not in st.session_state:
     st.session_state.last_uploaded_file_info = None
     st.session_state.file_uploaded = False
     st.session_state.temp_file_path = None
-    st.session_state.temp_file_dir = settings["vs_temp_path"]
 
 
 if uploaded_file is not None:
@@ -92,8 +94,6 @@ if st.sidebar.button('Update Database'):
             temp_dir.cleanup()
         # Create a temporary directory to save the uploaded file
         temp_dir = tempfile.TemporaryDirectory()    
-
-        st.session_state.temp_file_dir = os.path.join(settings["vs_temp_path"],os.path.basename(temp_dir.name))
         # Define the file path
         temp_file_path = os.path.join(temp_dir.name, uploaded_file.name)
         # Save the uploaded file to the temporary directory
@@ -105,8 +105,7 @@ if st.sidebar.button('Update Database'):
             text = f"""File uploaded to {temp_file_path}"""
             st.session_state.messages.append({"role": role, "info": text})
         st.session_state.temp_file_path = temp_file_path
-k = st.sidebar.number_input('Paragraph search count', min_value=1, value=user_settings.get('k', 4))
-threshold = st.sidebar.number_input('Semantic relevance', min_value=0.01, step=0.01, format="%0.2f", value=user_settings.get('threshold', 0.01))
+k = st.sidebar.number_input('Paragraph search count', min_value=1, max_value=7,value=user_settings.get('k', 4))
 st.sidebar.markdown("----")
 
 def load_outlook(role="assistant",avatar=avatar):
@@ -178,7 +177,6 @@ appointment_count = st.sidebar.number_input('Appointment Count', min_value=0, va
 updated_settings = {
     "rag_file_context_only": rag_file_context_only,
     "k": k,
-    "threshold": threshold,
     "verbose": verbose,
     "email_address": email_address,
     "email_folder": email_folder,
@@ -260,11 +258,11 @@ if len(st.session_state.messages) == 0:
 if rag_file_context_only and apply_file and st.session_state.file_uploaded:
     role = "assistant"
     with st.chat_message(role,avatar=avatar.get(role)):
-        text = f"""Okay, I will use {filename} as the only context for my answers. With pagraph count {k} and threshold {str(threshold)}."""
+        text = f"""Okay, I will use {filename} as the only context for my answers."""
         st.write_stream(response_generator(text))
         st.session_state.messages.append({"role": role, "content": text})
     try:
-        load_temp_vs(st.session_state.temp_file_path,verbose,st.session_state.temp_file_dir)
+        load_vs(st.session_state.temp_file_path,verbose,settings["vs_temp_path"],"file-contents")
     except Exception as e:
         st.exception(e)
         
@@ -272,12 +270,12 @@ if rag_file_context_only is False and apply_file and rag_file_context_only is no
     role = "assistant"
     with st.chat_message(role,avatar=avatar.get(role)):
         text = f"""Okay, I will use all the files in the knowledge base for my answers.
-        With pagraph count {k} and threshold {str(threshold)}. Knoweledge base: {settings["kb_root_path"]}"""
+        Knoweledge base: {settings["kb_root_path"]}"""
         st.write_stream(response_generator(text))
         st.session_state.messages.append({"role": role, "content": text})
         st.session_state.temp_file_path = None
     try:
-        load_kb_vs(None,verbose)
+        load_vs(settings["kb_root_path"],verbose,settings["vs_path"],"file-contents")
     except Exception as e:
         st.exception(e)
 
@@ -294,7 +292,7 @@ if prompt := st.chat_input("What do you need to know?"):
     # Split qa script in vectorstore load, and qa only
     print(st.session_state.temp_file_path)
     if rag_file_context_only and st.session_state.temp_file_path is not None:
-        get_answer(prompt,verbose,persist_directory=st.session_state.temp_file_dir,avatar=avatar,temp_file_path=st.session_state.temp_file_path)
+        get_answer(prompt,verbose,k,persist_directory=settings["vs_temp_path"],avatar=avatar,temp_file_path=st.session_state.temp_file_path)
     else:
         persist_directory=settings["vs_path"]
-        get_answer(prompt,verbose,persist_directory=persist_directory,avatar=avatar)
+        get_answer(prompt,verbose,k,persist_directory=persist_directory,avatar=avatar)
