@@ -13,21 +13,17 @@ from qa import get_answer
 import random
 from load_vs import load_vs
 
+#TODO N1: Upload SAP Documentation
+#TODO N2: sap HANA SQL Query generator based on sapc
+
+
+
 #TODO: Use a Local HTTP Server to Serve Files
 #TODO: use collection for filepaths instead of passing all of them as context
 #TODO: replace yields in qa for with context so that messages and logs get stored in the right order
 #TODO: remove repeated lines of code in answer
-# TODO: Make KB load like TEMP load and make qa vectorstore retrieval like single file
-# TODO: Export chat history, save chats, resume chats.
-# import streamlit as st
-# import streamlit.components.v1 as components
-# p = open("plot.html")
-# components.html(p.read())
-#TODO: support graphs, csv, tables
-#TODO: rag for single uploaded file
-#TODO: echo but with specified format i.e. json formatter, graph
-#TODO: use embbeding model as setting param
-#TODO: remove temp chroma db
+#TODO: Export chat history, save chats, resume chats.
+#TODO: support graphs, csv, table
 #TODO: use external vectorstore i.e. pinecone
 
 def response_generator(response=None):
@@ -62,7 +58,7 @@ avatar = {"system": '📢', "user": '🧑', "assistant": '🤖'}
 st.sidebar.title("Settings")
 verbose = st.sidebar.checkbox('Show logs', user_settings.get('verbose', False))
 st.sidebar.header("Document Search")
-uploaded_file = st.sidebar.file_uploader("Choose a file", type=["txt"])#, "docx", "doc", "pdf", "pptx", "ppt", "html", "md", "eml"])
+uploaded_file = st.sidebar.file_uploader("Choose a file", type=["txt","docx", "doc", "pdf", "pptx", "ppt", "html", "md", "eml"])#, "docx", "doc", "pdf", "pptx", "ppt", "html", "md", "eml"])
 
 # Check if a file is uploaded
 rag_file_context_only = None

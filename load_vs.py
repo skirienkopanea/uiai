@@ -1,19 +1,14 @@
 from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
-from io import StringIO
-import mimetypes
-import inspect
-import sys
 from colorama import Fore, Back, Style, init
 import shutil
 import os
 import json
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import WebBaseLoader, DirectoryLoader, TextLoader, CSVLoader
-from langchain_chroma import Chroma
-from openai import OpenAI
+from langchain_community.document_loaders import DirectoryLoader, TextLoader, CSVLoader
+from langchain_unstructured import UnstructuredLoader
+from unstructured.cleaners.core import clean_extra_whitespace
 from langchain_openai import OpenAIEmbeddings
 import warnings
-from datetime import datetime
 from db_agent import sqlquery
 from question_graph import generate_graph
 import pandas as pd
@@ -22,20 +17,8 @@ import re
 import openai
 from chromadb import PersistentClient
 from chromadb.db.base import UniqueConstraintError  
-from chromadb.config import Settings
 from langchain_community.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-
-# to do: make only rag assistant in other script 
-# this script only for RAG, replace vectorstoredb for large scale db
-#TODO: load temp and load kb should be the same method, it just need to take the docs object, persist directory and collection name as parameter
-#TODO: use online vectorstore
-#TODO: change CSV for SQL uploader
-#TODO: upload sap commissions documentation
-#TODO: upload sap commissions db schema
-#TODO: make the possibility to send emails
-#TODO: optimize rag (rag by filepath, rag by file summary, rag by file contents, rag by other metadata?)
 
 settings_path = 'settings.json'
 user_settings_path = 'user_settings.json'
@@ -76,7 +59,6 @@ def get_embedding(text, model="text-embedding-3-small"):
     return response.data[0].embedding
 
 def remove_directory(persist_directory,verbose,role="assistant"):
-    print("Deleting ",persist_directory)
     if not os.path.exists(persist_directory):
         os.makedirs(persist_directory)
         text = f"Directory '{persist_directory}' created."
@@ -103,7 +85,11 @@ def remove_directory(persist_directory,verbose,role="assistant"):
 def get_docs(file_path,verbose,role="assistant"):
 
     if os.path.isfile(file_path):
-        loader = TextLoader(file_path)
+        loader = UnstructuredLoader(
+        file_path,
+        post_processors=[clean_extra_whitespace],
+    )
+
         docs = loader.load()
         if verbose:
             text = f"Document loaded"
@@ -112,7 +98,7 @@ def get_docs(file_path,verbose,role="assistant"):
     
     elif os.path.isdir(file_path):
         root = file_path
-        loader = DirectoryLoader(root, glob=["**/*.docx","**/*.txt","**/*.pdf","**/*.sql"],
+        loader = DirectoryLoader(root, glob=["**/*.docx","**/*.html","**/*.pdf","**/*.sql","**/*.ppt"],
                                 exclude=["*Images/*"],
                                 recursive=True)
         docs = loader.load()
@@ -139,9 +125,14 @@ def get_docs(file_path,verbose,role="assistant"):
         st.session_state.messages.append({"role": role, "info": text})
     
     for doc in docs:
-        
-        doc.metadata["source"] = doc.metadata["source"].replace("./","").replace("\\","/")
-        print("update",doc.metadata["source"])
+        metadata_for_chromadb = {
+        #'points': json.dumps(doc.metadata['points']),
+        #'system': doc.metadata['system'],
+        #'layout_width': doc.metadata['layout_width'],
+        #'layout_height': doc.metadata['layout_height'],
+        'source': doc.metadata["source"].replace("./","").replace("\\","/")
+}
+        doc.metadata = metadata_for_chromadb
 
     splits = text_splitter.split_documents(docs)
     
@@ -203,15 +194,47 @@ def load_vs(file_path,verbose,persist_directory,collection_name,avatar={"system"
         st.info(text)
         st.session_state.messages.append({"role": role, "info": text})
 
+    try:
+        if os.path.isdir(file_path): title_collection = create_collection(chroma_client, "file-names",model)
+    except UniqueConstraintError as e:
+        
+        st.error(e)
+        st.session_state.messages.append({"role": role, "error": e})
+        if os.path.isdir(file_path): delete_collection(persist_directory,verbose,chroma_client,"file-names")
+        st.session_state.collection_name = None # In case it crashes it should know that it doesnt exist
+        text = f"Deleted file-names collection."
+        st.info(text)
+        st.session_state.messages.append({"role": role, "info": text})
+        title_collection = create_collection(chroma_client, "file-names",model)
+        
+    if verbose:
+        text=(f"Collection file-names created successfully.")
+        st.info(text)
+        st.session_state.messages.append({"role": role, "info": text})
+
     # load directory vs load file
     docs = get_docs(file_path,verbose)
-
+    
     collection.add(
         ids=docs["ids"],
         embeddings=docs["embeddings"],
         metadatas=docs["metadatas"],
         documents=docs["documents"]
-)    
+    )
+    
+    paths = []
+    print(file_path)
+    if os.path.isdir(file_path):
+        for root, dirs, files in os.walk(file_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                paths.append(file_path)
+                print(file_path)
+
+    title_collection.add(
+        ids=paths,
+        embeddings=[get_embedding(path) for path in paths]
+    ) 
     
     if verbose:
         role = "assistant"
@@ -223,3 +246,4 @@ def load_vs(file_path,verbose,persist_directory,collection_name,avatar={"system"
     text = f"Database updated"
     st.success(text)
     st.session_state.messages.append({"role": role, "success": text})
+    print("Database updated")

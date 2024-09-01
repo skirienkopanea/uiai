@@ -1,10 +1,10 @@
 {
     "rag_file_context_only": null,
-    "k": 4,
-    "verbose": false,
+    "k": 7,
+    "verbose": true,
     "email_address": "<your_email_address>",
     "email_folder": "Inbox",
-    "email_count": 50,
+    "email_count": 51,
     "appointment_count": 5,
     "OPENAI_API_KEY": "kjbkjhkjh"
 }

@@ -1,15 +1,10 @@
 from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
 from chromadb import PersistentClient
 from io import StringIO
-import mimetypes
 import inspect
-import sys
 from colorama import Fore, Back, Style, init
-import shutil
 import os
 import json
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import WebBaseLoader, DirectoryLoader, TextLoader, CSVLoader
 from langchain_chroma import Chroma
 from openai import OpenAI
 from langchain_openai import OpenAIEmbeddings
@@ -19,8 +14,6 @@ from db_agent import sqlquery
 from question_graph import generate_graph
 import pandas as pd
 import streamlit as st
-import re
-import gc
 
 # to do: make only rag assistant in other script 
 # this script only for RAG, replace vectorstoredb for large scale db
@@ -54,6 +47,8 @@ def qa(q,verbose,k,persist_directory=settings["vs_path"],avatar={"system": '📢
         chroma_client = PersistentClient(path=persist_directory)
         collection_name = "file-contents"
         collection = chroma_client.get_collection(collection_name,embedding_function=embedding_function)
+        title_collection = chroma_client.get_collection("file-names",embedding_function=embedding_function)
+
 
         print(f"Collection '{collection_name}' retrieved successfully.")
     except Exception as e:
@@ -273,20 +268,9 @@ def qa(q,verbose,k,persist_directory=settings["vs_path"],avatar={"system": '📢
     def get_relevant_file_or_directory(query,root):
         # Returns all paths from root directory that will be passed as context
         def list_all_files_and_dirs(root):
-            result = [root]
-            
-            for dirpath, dirnames, filenames in os.walk(root):
-                # Append the directory itself
-                result.append(dirpath)
-                
-                # Append all files in the current directory
-                for filename in filenames:
-                    result.append(os.path.join(dirpath, filename))
-                
-                if not dirnames and not filenames:
-                    result.append(dirpath)
-            
-            return result
+            results = title_collection.query(query_texts=query, n_results=15)
+            print(results)
+            return results['ids'][0]
         paths = ""
         model = "gpt-4o-mini"
         system_prompt = f"""You are a path finder machine.
