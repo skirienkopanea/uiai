@@ -195,12 +195,12 @@ def load_vs(file_path,verbose,persist_directory,collection_name,avatar={"system"
         st.session_state.messages.append({"role": role, "info": text})
 
     try:
-        if os.path.isdir(file_path): title_collection = create_collection(chroma_client, "file-names",model)
+        title_collection = create_collection(chroma_client, "file-names",model)
     except UniqueConstraintError as e:
         
         st.error(e)
         st.session_state.messages.append({"role": role, "error": e})
-        if os.path.isdir(file_path): delete_collection(persist_directory,verbose,chroma_client,"file-names")
+        delete_collection(persist_directory,verbose,chroma_client,"file-names")
         st.session_state.collection_name = None # In case it crashes it should know that it doesnt exist
         text = f"Deleted file-names collection."
         st.info(text)
@@ -230,6 +230,8 @@ def load_vs(file_path,verbose,persist_directory,collection_name,avatar={"system"
                 file_path = os.path.join(root, file)
                 paths.append(file_path)
                 print(file_path)
+    elif os.path.isfile(file_path):
+        paths = [file_path]
 
     title_collection.add(
         ids=paths,
